@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: bess_mysql_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: battery_rul_db
+      MYSQL_ROOT_PASSWORD: root_password_2026
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  web:
+    build: .
+    container_name: bess_flask_app
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: battery_rul_db
+      DB_USER: root
+      DB_PASSWORD: root_password_2026
+      JWT_SECRET_KEY: bess_production_jwt_secret_2026
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
