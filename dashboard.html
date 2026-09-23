@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BESS Battery RUL SaaS Platform Pro</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- jsPDF Library for Client-Side PDF Diagnostics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        body { background-color: #0b0f19; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
+        .bg-card { background-color: #151c2c; border: 1px solid #222d45 !important; border-radius: 8px; }
+        .form-control-dark, .form-select-dark { background-color: #0b0f19; border: 1px solid #222d45; color: #e2e8f0; border-radius: 4px; padding: 6px 10px; font-size: 0.88rem; }
+        .form-control-dark:focus, .form-select-dark:focus { background-color: #0b0f19; border-color: #0ea5e9; color: #ffffff; box-shadow: none; }
+        .btn-cyan { background-color: #0ea5e9; border: none; color: #ffffff; font-weight: 600; }
+        .btn-cyan:hover { background-color: #0284c7; color: #ffffff; }
+        .btn-stream { background-color: #1e293b; border: 1px solid #334155; color: #38bdf8; font-weight: 600; }
+        .btn-stream.active { background-color: #166534; border-color: #22c55e; color: #4ade80; }
+        .text-muted-custom { color: #94a3b8; }
+        .extra-small { font-size: 0.75rem; }
+
+        .kpi-banner-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+        @media (max-width: 1200px) { .kpi-banner-grid { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 768px) { .kpi-banner-grid { grid-template-columns: repeat(1, 1fr); } }
+
+        .rack-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+        .cell-tile { background-color: #0b0f19; border: 1px solid #334155; border-radius: 4px; padding: 6px 2px; text-align: center; cursor: pointer; transition: all 0.2s ease-in-out; }
+        .cell-tile:hover { transform: scale(1.05); border-color: #38bdf8; }
+        .cell-tile.healthy { border-left: 4px solid #22c55e; }
+        .cell-tile.warning { border-left: 4px solid #eab308; }
+        .cell-tile.critical { border-left: 4px solid #ef4444; background-color: rgba(239, 68, 68, 0.15); }
+
+        .animate-pulse { animation: pulse 1.2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body class="p-3">
+
+    <div class="container-fluid">
+
+        <!-- Top Header Navigation & Action Links -->
+        <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom border-secondary">
+            <div class="d-flex align-items-center gap-3">
+                <h1 class="h5 fw-bold text-info m-0">⚡ BESS RUL SaaS Enterprise</h1>
+                <span class="badge bg-dark text-info border border-info" id="engine-architecture-tag">
+                    Engine: Cloud Physics-Informed (PIML)
+                </span>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-outline-warning text-light px-2 py-1" onclick="downloadPdfReport()">
+                    📄 Diagnostic PDF Report
+                </button>
+                <a href="/docs" target="_blank" class="btn btn-sm btn-outline-info text-info px-2 py-1">
+                    🔗 BMS API Docs (/docs)
+                </a>
+                <button class="btn btn-sm btn-outline-secondary text-light px-2 py-1" data-bs-toggle="modal" data-bs-target="#archModal">
+                    ☁️ Cloud Architecture
+                </button>
+                <span id="live-pulse-badge" class="badge bg-danger animate-pulse d-none">● LIVE SSE STREAM</span>
+                <div id="connection-status" class="badge bg-secondary px-2 py-1 fw-bold">
+                    Status: Single-Point
+                </div>
+                <div class="text-end ms-2 me-1">
+                    <div class="fw-bold extra-small text-light">{{ user.full_name if user else 'Plant Operator' }}</div>
+                    <div class="text-muted extra-small">{{ user.email if user else 'operator@bess-plant.com' }}</div>
+                </div>
+                <a href="/logout" class="btn btn-sm btn-outline-danger px-2 py-1">Logout</a>
+            </div>
+        </div>
+
+        <!-- Thermal Runaway Alert Banner -->
+        <div id="thermal-runaway-banner" class="alert alert-danger d-none animate-pulse fw-bold d-flex justify-content-between align-items-center mb-3" role="alert">
+            <span>⚠️ CRITICAL ALERT: Thermal Threshold Breached! Automated Email Alert Dispatched.</span>
+            <button class="btn btn-sm btn-danger fw-bold" data-bs-toggle="modal" data-bs-target="#rcaModal" onclick="populateRcaModal('CELL_07', 48.2, 0.920)">
+                ⚡ Run RCA Assistant
+            </button>
+        </div>
+
+        <!-- KPI Grid Banner -->
+        <div class="kpi-banner-grid mb-3">
+            <div class="bg-card p-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-muted-custom small">State of Health (SOH)</span>
+                    <span class="badge bg-dark text-light border border-secondary" id="baseline-ref-label">2.0 Ah</span>
+                </div>
+                <div class="h3 fw-bold text-white my-1" id="soh-display">92.00%</div>
+                <div class="progress mt-2" style="height: 6px; background-color: #0b0f19;">
+                    <div id="soh-progress-bar" class="progress-bar bg-success" role="progressbar" style="width: 92%;"></div>
+                </div>
+            </div>
+
+            <div class="bg-card p-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-muted-custom small">Predicted RUL</span>
+                    <span class="text-muted-custom extra-small" id="latency-display">2.1 ms</span>
+                </div>
+                <div class="h3 fw-bold text-info my-1" id="rul-display">883 Cycles</div>
+                <div class="text-muted-custom extra-small" id="bandwidth-display">Telemetry Bandwidth: 12.5 MB/s</div>
+            </div>
+
+            <div class="bg-card p-3">
+                <span class="text-muted-custom small">System Status</span>
+                <div class="my-1">
+                    <span class="badge bg-success px-3 py-2" id="status-badge">Nominal</span>
+                </div>
+                <div class="text-muted-custom extra-small" id="thermal-alert-label">Alert Threshold: {{ user.temp_threshold if user else 45.0 }}°C</div>
+            </div>
+
+            <div class="bg-card p-3">
+                <span class="text-muted-custom small">Est. Days to Replacement</span>
+                <div class="h3 fw-bold text-warning my-1" id="days-display">589 Days</div>
+                <div class="text-muted-custom extra-small" id="duty-cycle-label">At 1.50 Cycles/Day</div>
+            </div>
+
+            <div class="bg-card p-3">
+                <span class="text-muted-custom small">Est. OpEx Replacement</span>
+                <div class="h3 fw-bold text-light my-1" id="cost-display">$360</div>
+                <div class="text-muted-custom extra-small">Cell Cost Model</div>
+            </div>
+        </div>
+
+        <!-- 16-Cell Pack Visualizer with Fleet Facility Rack Switcher -->
+        <div class="bg-card p-3 mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <h3 class="h6 fw-bold text-white m-0">Multi-Cell BESS Rack Topology View:</h3>
+                    <select id="rack-selector" class="form-select form-select-dark form-select-sm py-0 font-monospace text-info fw-bold" style="width: auto;" onchange="switchFacilityRack(this.value)">
+                        <option value="RACK_ALPHA_01" selected>RACK_ALPHA_01 (Thermal Anomaly Alert)</option>
+                        <option value="RACK_BETA_02">RACK_BETA_02 (Degraded Storage Bank)</option>
+                        <option value="RACK_GAMMA_03">RACK_GAMMA_03 (Nominal Facility Fleet)</option>
+                    </select>
+                </div>
+                <span class="text-muted-custom extra-small">Click any cell to inspect individual telemetry</span>
+            </div>
+            <div class="rack-grid" id="rack-grid-container"></div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="row g-3">
+            <!-- Left Column: Unified Controls -->
+            <div class="col-lg-4">
+                <div class="bg-card p-3 mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h2 class="h6 fw-bold text-white m-0">Telemetry & Edge AI Configuration</h2>
+                        <button type="button" id="stream-toggle-btn" class="btn btn-sm btn-stream px-2 py-1">
+                            ► SSE Stream
+                        </button>
+                    </div>
+                    
+                    <form id="telemetry-form" onsubmit="return false;">
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Inference Engine</label>
+                                <select class="form-select form-select-dark" id="model_engine">
+                                    <option value="piml" selected>PIML (Cloud Power-Law)</option>
+                                    <option value="federated_edge">Edge AI (Federated)</option>
+                                    <option value="xgboost">XGBoost Regressor</option>
+                                    <option value="lstm">LSTM Network</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Cell Chemistry</label>
+                                <select class="form-select form-select-dark" id="battery_chemistry">
+                                    <option value="NMC" selected>NMC (Lithium)</option>
+                                    <option value="LFP">LFP (Iron Phos.)</option>
+                                    <option value="LTO">LTO (Titanate)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Cell Serial ID</label>
+                                <input type="text" class="form-control form-control-dark" id="battery_id" value="CELL_01">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Cycle Number</label>
+                                <input type="number" class="form-control form-control-dark" id="cycle_number" value="150">
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Capacity (Ah)</label>
+                                <input type="number" step="0.01" class="form-control form-control-dark" id="capacity_ah" value="1.84" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Peak Voltage (V)</label>
+                                <input type="number" step="0.01" class="form-control form-control-dark" id="peak_voltage_v" value="4.15" required>
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Avg Temp (°C)</label>
+                                <input type="number" step="0.1" class="form-control form-control-dark" id="avg_temp_c" value="28.5" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Resistance (Ω)</label>
+                                <input type="number" step="0.0001" class="form-control form-control-dark" id="internal_resistance_ohm" value="0.0185" required>
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Fade Rate (Ah/cyc)</label>
+                                <input type="number" step="0.00001" class="form-control form-control-dark" id="fade_rate" value="0.00082">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label text-muted-custom extra-small mb-1">Duty Cycles / Day</label>
+                                <input type="number" step="0.1" class="form-control form-control-dark" id="duty_cycle_rate" value="1.5">
+                            </div>
+                        </div>
+
+                        <button type="button" id="predict-btn" class="btn btn-cyan w-100 py-2">
+                            Execute RUL Inference
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Energy Arbitrage vs. Degradation Optimizer -->
+                <div class="bg-card p-3 mb-3">
+                    <h2 class="h6 fw-bold text-info mb-2">⚡ Energy Arbitrage vs. Degradation Optimizer</h2>
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between text-muted-custom extra-small">
+                            <span>Simulated Grid Spot Price ($/kWh)</span>
+                            <span id="grid-price-val" class="text-warning font-monospace">$0.32 / kWh</span>
+                        </div>
+                        <input type="range" class="form-range" id="grid-price-slider" min="0.05" max="0.60" step="0.01" value="0.32">
+                    </div>
+
+                    <div class="bg-dark p-2 rounded border border-secondary mb-2 extra-small">
+                        <div class="d-flex justify-content-between"><span>Discharge Revenue (100 kWh):</span><span id="discharge-rev-disp" class="text-success">$29.44</span></div>
+                        <div class="d-flex justify-content-between"><span>Cycle OpEx Degradation:</span><span id="degradation-cost-disp" class="text-danger">-$6.52</span></div>
+                        <hr class="my-1 border-secondary">
+                        <div class="d-flex justify-content-between fw-bold"><span>Net Arbitrage Margin:</span><span id="net-arbitrage-disp" class="text-info">+$22.92</span></div>
+                    </div>
+
+                    <div id="arbitrage-recommendation-badge" class="badge bg-success w-100 py-2 fw-bold text-wrap">
+                        DISCHARGE RECOMMENDED
+                    </div>
+                </div>
+
+                <!-- What-If Scenario Simulator -->
+                <div class="bg-card p-3">
+                    <h2 class="h6 fw-bold text-white mb-2">What-If Scenario Simulator</h2>
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between text-muted-custom extra-small">
+                            <span>Target C-Rate</span>
+                            <span id="crate-val" class="text-info font-monospace">1.0 C</span>
+                        </div>
+                        <input type="range" class="form-range" id="crate-slider" min="0.5" max="3.0" step="0.1" value="1.0">
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between text-muted-custom extra-small">
+                            <span>HVAC Cooling Target</span>
+                            <span id="cooling-val" class="text-info font-monospace">25.0 °C</span>
+                        </div>
+                        <input type="range" class="form-range" id="cooling-slider" min="18.0" max="40.0" step="1.0" value="25.0">
+                    </div>
+
+                    <div class="bg-dark p-2 rounded border border-secondary text-center">
+                        <span class="text-muted-custom extra-small d-block">Projected Life Extension Savings</span>
+                        <span id="savings-display" class="h5 fw-bold text-success m-0">+$0.00 USD</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Charts & Log -->
+            <div class="col-lg-8">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <div class="bg-card p-3" style="min-height: 320px;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h6 fw-bold text-white m-0">Degradation Trajectory with What-If Optimization</h3>
+                                <span class="text-muted-custom extra-small">EOL: 80% Capacity</span>
+                            </div>
+                            <div class="position-relative" style="height: 250px;">
+                                <canvas id="degradationChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="bg-card p-3" style="min-height: 170px;">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <h3 class="h6 fw-bold text-white m-0">Model Explainability (SHAP Feature Attribution)</h3>
+                                <span class="text-muted-custom extra-small">Impact quantified in RUL Cycles</span>
+                            </div>
+                            <div class="position-relative" style="height: 115px;">
+                                <canvas id="shapChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="bg-card p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h6 fw-bold text-white m-0">Real-Time SCADA Anomaly & Events Log</h3>
+                                <button class="btn btn-sm btn-outline-danger extra-small py-0" data-bs-toggle="modal" data-bs-target="#rcaModal" onclick="populateRcaModal('CELL_07', 48.2, 0.920)">
+                                    ⚡ Generate RCA Summary
+                                </button>
+                            </div>
+                            <div class="table-responsive" style="max-height: 120px; overflow-y: auto;">
+                                <table class="table table-dark table-sm extra-small m-0">
+                                    <thead>
+                                        <tr class="text-muted-custom">
+                                            <th>Timestamp</th>
+                                            <th>Cell ID</th>
+                                            <th>Severity</th>
+                                            <th>Anomaly Score</th>
+                                            <th>Event Trigger / Mitigation Action</th>
+                                            <th>RCA Diagnosis</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="events-log-body">
+                                        <tr>
+                                            <td class="text-muted">20:15:39</td>
+                                            <td>CELL_07</td>
+                                            <td><span class="badge bg-danger">CRITICAL</span></td>
+                                            <td>0.920</td>
+                                            <td>Thermal Hot-Spot detected (Temp: 48.2°C). Email alert dispatched.</td>
+                                            <td>
+                                                <button class="btn btn-xs btn-outline-info py-0 px-1 extra-small" data-bs-toggle="modal" data-bs-target="#rcaModal" onclick="populateRcaModal('CELL_07', 48.2, 0.920)">
+                                                    View RCA
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Automated Root Cause Analysis (RCA) Modal -->
+    <div class="modal fade" id="rcaModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content bg-card border-danger text-light">
+                <div class="modal-header border-secondary bg-dark">
+                    <h5 class="modal-title fw-bold text-danger d-flex align-items-center gap-2">
+                        🚨 Automated Root Cause Analysis (RCA) Assistant
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-dark border border-secondary mb-3">
+                        <div class="row">
+                            <div class="col-4"><strong>Target Unit:</strong> <span id="rca-cell-id" class="text-info">CELL_07</span></div>
+                            <div class="col-4"><strong>Operating Temp:</strong> <span id="rca-temp" class="text-danger">48.2°C</span></div>
+                            <div class="col-4"><strong>Anomaly Score:</strong> <span id="rca-score" class="text-warning">0.920 / 1.0</span></div>
+                        </div>
+                    </div>
+
+                    <h6 class="fw-bold text-warning mb-2">🔍 AI Diagnostic Findings</h6>
+                    <p class="small text-muted-custom" id="rca-findings-text">
+                        Cell thermal degradation is primarily driven by high ambient operating temperature (<strong>48.2°C</strong>) during rapid 1.8C fast-charging cycles. Internal resistance has spiked to 0.0240 Ω, generating localized ohmic heating.
+                    </p>
+
+                    <h6 class="fw-bold text-success mb-2">✅ Recommended Mitigation Action Plan</h6>
+                    <ul class="small text-light mb-3">
+                        <li>Engage auxiliary HVAC cooling to reduce cell ambient temperature below 25.0°C.</li>
+                        <li>Cap charge rate at 1.0C until thermal equilibrium is restored.</li>
+                        <li>Dispatch technician to inspect rack cooling manifold B2 for fluid throttling.</li>
+                    </ul>
+
+                    <div class="p-2 bg-dark rounded border border-secondary extra-small text-muted-custom">
+                        <strong>SCADA Automation Status:</strong> HVAC override signal queued. Email notification sent to plant operator.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cloud Stack Modal -->
+    <div class="modal fade" id="archModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content bg-card border-secondary text-light">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-info">☁️ SaaS Production Architecture & Stack Overview</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row text-center g-3">
+                        <div class="col-3">
+                            <div class="p-2 border border-secondary rounded bg-dark">
+                                <div class="fw-bold text-info">REST API & Docs</div>
+                                <div class="small">OpenAPI / Swagger (/docs)</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="p-2 border border-secondary rounded bg-dark">
+                                <div class="fw-bold text-warning">Edge AI Engine</div>
+                                <div class="small">Federated Edge Weights</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="p-2 border border-secondary rounded bg-dark">
+                                <div class="fw-bold text-success">PDF Diagnostics</div>
+                                <div class="small">Client jsPDF Exporter</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="p-2 border border-secondary rounded bg-dark">
+                                <div class="fw-bold text-primary">Fleet Switcher</div>
+                                <div class="small">Multi-Rack Topology</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

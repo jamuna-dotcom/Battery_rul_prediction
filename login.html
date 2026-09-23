@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BESS SaaS Pro - Operator Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0b0f19; color: #f1f5f9; font-family: sans-serif; }
+        .auth-card { background-color: #151c2c; border: 1px solid #222d45; border-radius: 8px; width: 100%; max-width: 400px; }
+        .form-control { background-color: #0b0f19; border: 1px solid #222d45; color: #fff; }
+        .form-control:focus { background-color: #0b0f19; border-color: #0ea5e9; color: #fff; box-shadow: none; }
+    </style>
+</head>
+<body class="d-flex align-items-center justify-content-center vh-100 p-3">
+    <div class="auth-card p-4 shadow-lg">
+        <div class="text-center mb-4">
+            <h1 class="h4 fw-bold text-info">⚡ BESS SaaS Portal</h1>
+            <p class="text-muted small">Enter credentials to access battery rack telemetry</p>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} py-2 small">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="/login">
+            <div class="mb-3">
+                <label class="form-label small text-muted">Email Address</label>
+                <input type="email" name="email" class="form-control" placeholder="operator@bess-plant.com" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small text-muted">Password</label>
+                <input type="password" name="password" class="form-control" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn btn-info w-100 fw-bold py-2 mb-3">Sign In</button>
+        </form>
+        <div class="text-center extra-small">
+            <span class="text-muted">Need an operator account?</span> <a href="/register" class="text-info text-decoration-none">Register Here</a>
+        </div>
+    </div>
+</body>
+</html>
